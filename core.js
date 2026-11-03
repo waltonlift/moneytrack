@@ -151,7 +151,8 @@
     return {
       v: 1, lastRev: 0, lastSync: null, skewMs: 0,
       tx: {}, wallets: [], categories: [], fees: [],
-      settings: { autoLock: 5, lastWallet: '' }
+      sheet: null, srvVersion: 0,
+      settings: { autoLock: 5, lastWallet: '', hideBalance: false }
     };
   }
 
@@ -168,6 +169,11 @@
 
   function pendingCount(db) {
     return Object.keys(db.tx).filter(function (id) { return db.tx[id].dirty; }).length;
+  }
+
+  // Entries the sheet refused (the reason is kept in syncError).
+  function rejectedTx(db) {
+    return liveTx(db).filter(function (t) { return t.syncError; });
   }
 
   function percentFor(db, from, to) {
@@ -297,6 +303,207 @@
     return { income: round2(inn), expense: round2(out) };
   }
 
+
+  // ------------------------------------------------------------ reports
+
+  var WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  function weekdayOf(date) {
+    var p = date.split('-').map(Number);
+    return new Date(p[0], p[1] - 1, p[2]).getDay();
+  }
+
+  function spend(t) { return t.type === 'expense' ? t.amount : (t.type === 'transfer' ? t.fee : 0); }
+
+  function inScope(t, key) { return key === '' || t.date.indexOf(key) === 0; }
+
+  function nextDay(date) {
+    var p = date.split('-').map(Number);
+    return todayStr(new Date(p[0], p[1] - 1, p[2] + 1));
+  }
+
+  function totalsOf(list) {
+    var o = { income: 0, expense: 0, fees: 0, expenseCount: 0, incomeCount: 0, transferCount: 0 };
+    list.forEach(function (t) {
+      if (t.type === 'income') { o.income += t.amount; o.incomeCount++; }
+      else if (t.type === 'expense') { o.expense += t.amount; o.expenseCount++; }
+      else { o.fees += t.fee; o.transferCount++; }
+    });
+    o.spent = round2(o.expense + o.fees);
+    o.income = round2(o.income); o.expense = round2(o.expense); o.fees = round2(o.fees);
+    o.net = round2(o.income - o.spent);
+    return o;
+  }
+
+  function categoryTotals(list, type) {
+    var m = {};
+    list.forEach(function (t) {
+      if (t.type === type) {
+        var c = m[t.category] || (m[t.category] = { amount: 0, count: 0 });
+        c.amount += t.amount; c.count++;
+      } else if (type === 'expense' && t.type === 'transfer' && t.fee > 0) {
+        var f = m['Transfer fee'] || (m['Transfer fee'] = { amount: 0, count: 0 });
+        f.amount += t.fee; f.count++;
+      }
+    });
+    return m;
+  }
+
+  function ranked(m, total, prevMap) {
+    return Object.keys(m).map(function (n) {
+      var prev = prevMap ? (prevMap[n] ? round2(prevMap[n].amount) : 0) : null;
+      return { name: n, amount: round2(m[n].amount), count: m[n].count, pct: total > 0 ? m[n].amount / total * 100 : 0,
+        prev: prev, delta: prev === null ? null : round2(m[n].amount - prev) };
+    }).sort(function (a, b) { return b.amount - a.amount; });
+  }
+
+  function pctChange(now, before) { return before > 0 ? (now - before) / before * 100 : null; }
+
+  // Everything the Reports page shows for one month, one year, or all time.
+  // scope: 'month' (key 'YYYY-MM'), 'year' (key 'YYYY'), 'all' (key '').
+  function report(db, scope, key, today) {
+    today = today || todayStr();
+    if (scope === 'all') key = '';
+    var live = liveTx(db);
+    var cur = live.filter(function (t) { return inScope(t, key); });
+    var tot = totalsOf(cur);
+
+    // the period before it, for comparison
+    var prevKey = scope === 'month' ? addMonths(key, -1) : scope === 'year' ? String(Number(key) - 1) : null;
+    var isCurrent = scope === 'month' ? key === monthOf(today) : scope === 'year' ? key === today.slice(0, 4) : false;
+    var prevList = prevKey === null ? [] : live.filter(function (t) { return inScope(t, prevKey); });
+    if (prevKey !== null && isCurrent) {   // compare like with like: the same stretch of the earlier period
+      var cut = scope === 'month' ? today.slice(8, 10) : today.slice(5, 10);
+      prevList = prevList.filter(function (t) { return (scope === 'month' ? t.date.slice(8, 10) : t.date.slice(5, 10)) <= cut; });
+    }
+    var prev = prevKey === null ? null : totalsOf(prevList);
+
+    // the stretch of days covered so far
+    var start, end;
+    if (scope === 'month') { start = key + '-01'; end = key + '-' + pad(daysInMonth(key)); }
+    else if (scope === 'year') { start = key + '-01-01'; end = key + '-12-31'; }
+    else {
+      start = cur.length ? cur.map(function (t) { return t.date; }).sort()[0] : today;
+      end = today;
+    }
+    if (end > today) end = today;
+    if (start > end) start = end;
+
+    var spentByDate = {}, incomeByDate = {}, countByDate = {};
+    cur.forEach(function (t) {
+      countByDate[t.date] = (countByDate[t.date] || 0) + 1;
+      var s = spend(t);
+      if (s > 0) spentByDate[t.date] = (spentByDate[t.date] || 0) + s;
+      if (t.type === 'income') incomeByDate[t.date] = (incomeByDate[t.date] || 0) + t.amount;
+    });
+
+    var wd = [0, 0, 0, 0, 0, 0, 0], wdDays = [0, 0, 0, 0, 0, 0, 0];
+    var days = 0, noSpend = 0, longestStreak = 0, streak = 0, busiest = null;
+    for (var d = start; d <= end; d = nextDay(d)) {
+      var w = weekdayOf(d), sp = spentByDate[d] || 0;
+      days++; wdDays[w]++; wd[w] += sp;
+      if (sp === 0) { noSpend++; streak++; if (streak > longestStreak) longestStreak = streak; } else streak = 0;
+      if (sp > 0 && (!busiest || sp > busiest.amount)) busiest = { date: d, amount: round2(sp) };
+    }
+
+    var daily = null;
+    if (scope === 'month') {
+      daily = [];
+      for (var i = 1; i <= daysInMonth(key); i++) {
+        var ds = key + '-' + pad(i);
+        daily.push({ date: ds, day: i, spent: round2(spentByDate[ds] || 0), income: round2(incomeByDate[ds] || 0),
+          count: countByDate[ds] || 0, future: ds > today });
+      }
+    }
+
+    // months for the bar chart
+    var byMonth = {};
+    live.forEach(function (t) {
+      var m = monthOf(t.date), b = byMonth[m] || (byMonth[m] = { income: 0, spent: 0 });
+      if (t.type === 'income') b.income += t.amount; else b.spent += spend(t);
+    });
+    var endYm = scope === 'month' ? key : scope === 'year' ? key + '-12' : monthOf(today);
+    var span = scope === 'month' ? 6 : 12;
+    var months = [];
+    for (var k = span - 1; k >= 0; k--) {
+      var ym = addMonths(endYm, -k), b = byMonth[ym] || { income: 0, spent: 0 };
+      months.push({ ym: ym, label: MONTHS[Number(ym.slice(5, 7)) - 1].slice(0, 3), income: round2(b.income), spent: round2(b.spent),
+        net: round2(b.income - b.spent), future: ym > monthOf(today) });
+    }
+    var active = months.filter(function (m) { return !m.future && (m.spent > 0 || m.income > 0); });
+    var avgMonthSpent = active.length ? round2(active.reduce(function (a, m) { return a + m.spent; }, 0) / active.length) : 0;
+
+    // wallets
+    var bal = balances(db);
+    var wmap = {};
+    bal.wallets.forEach(function (w) { wmap[w.name] = { name: w.name, balance: w.balance, income: 0, spent: 0, moveIn: 0, moveOut: 0, fees: 0 }; });
+    function wslot(n) { return wmap[n] || (wmap[n] = { name: n, balance: 0, income: 0, spent: 0, moveIn: 0, moveOut: 0, fees: 0 }); }
+    var moved = 0;
+    cur.forEach(function (t) {
+      if (t.type === 'income') wslot(t.wallet).income += t.amount;
+      else if (t.type === 'expense') wslot(t.wallet).spent += t.amount;
+      else {
+        wslot(t.wallet).moveOut += t.amount; wslot(t.wallet).fees += t.fee;
+        wslot(t.toWallet).moveIn += t.amount; moved += t.amount;
+      }
+    });
+    var wallets = Object.keys(wmap).map(function (n) {
+      var w = wmap[n];
+      w.in = round2(w.income + w.moveIn);
+      w.out = round2(w.spent + w.moveOut + w.fees);
+      w.net = round2(w.in - w.out);
+      return w;
+    });
+
+    var expenseList = cur.filter(function (t) { return t.type === 'expense'; });
+    var top = expenseList.slice().sort(function (a, b) { return b.amount - a.amount; }).slice(0, 5);
+    var biggestIncome = cur.filter(function (t) { return t.type === 'income'; })
+      .sort(function (a, b) { return b.amount - a.amount; })[0] || null;
+
+    var byCategory = ranked(categoryTotals(cur, 'expense'), tot.spent, prevKey === null ? null : categoryTotals(prevList, 'expense'));
+    var incomeByCategory = ranked(categoryTotals(cur, 'income'), tot.income, null);
+    var frequent = byCategory.slice().sort(function (a, b) { return b.count - a.count; })[0] || null;
+
+    var elapsed = scope === 'month' && isCurrent ? Number(today.slice(8, 10)) : days;
+    var projection = null;
+    if (scope === 'month' && isCurrent && tot.spent > 0 && elapsed >= 5) {   // too early in the month to say anything useful before that
+      var dim = daysInMonth(key);
+      projection = { amount: round2(tot.spent / elapsed * dim), daysLeft: dim - elapsed };
+    }
+
+    return {
+      scope: scope, key: key, isCurrent: isCurrent, prevKey: prevKey, start: start, end: end, days: days,
+      income: tot.income, expense: tot.expense, fees: tot.fees, spent: tot.spent, net: tot.net,
+      savingsRate: tot.income > 0 ? tot.net / tot.income * 100 : null,
+      counts: { all: cur.length, expense: tot.expenseCount, income: tot.incomeCount, transfer: tot.transferCount },
+      prev: prev, spentChange: prev ? pctChange(tot.spent, prev.spent) : null, incomeChange: prev ? pctChange(tot.income, prev.income) : null,
+      avgPerDay: days > 0 ? round2(tot.spent / days) : 0,
+      avgExpense: tot.expenseCount ? round2(tot.expense / tot.expenseCount) : 0,
+      noSpendDays: noSpend, longestNoSpend: longestStreak, busiest: busiest,
+      byCategory: byCategory, incomeByCategory: incomeByCategory, frequent: frequent,
+      daily: daily, months: months, avgMonthSpent: avgMonthSpent,
+      weekdays: WEEKDAYS.map(function (n, i) {
+        return { name: n, total: round2(wd[i]), avg: wdDays[i] ? round2(wd[i] / wdDays[i]) : 0, days: wdDays[i] };
+      }),
+      wallets: wallets, moved: round2(moved),
+      top: top, biggestIncome: biggestIncome, projection: projection
+    };
+  }
+
+  // Spending per day for the last n days, ending today (oldest first).
+  function lastDays(db, n, today) {
+    today = today || todayStr();
+    var by = {};
+    liveTx(db).forEach(function (t) { var s = spend(t); if (s > 0) by[t.date] = (by[t.date] || 0) + s; });
+    var out = [];
+    var p = today.split('-').map(Number);
+    for (var i = n - 1; i >= 0; i--) {
+      var d = new Date(p[0], p[1] - 1, p[2] - i), ds = todayStr(d);
+      out.push({ date: ds, label: WEEKDAYS[d.getDay()], spent: round2(by[ds] || 0), today: i === 0 });
+    }
+    return out;
+  }
+
   // ------------------------------------------------------------ edits
 
   // Returns a message for the first problem, or '' when the input is fine.
@@ -310,6 +517,13 @@
       if (f.fee !== '' && f.fee != null && !(Number(f.fee) >= 0)) return 'Enter a valid fee';
     } else if (!f.category) return 'Choose a category';
     return '';
+  }
+
+  // A new edit always gets a time later than the entry's previous one,
+  // so two quick edits can never be mistaken for the same version.
+  function stamp(prev) {
+    var now = Date.now(), p = prev ? Date.parse(prev) : 0;
+    return new Date(now > p ? now : p + 1).toISOString();
   }
 
   function applyFields(t, f) {
@@ -327,7 +541,7 @@
       t.toWallet = '';
       t.fee = 0;
     }
-    t.updatedAt = new Date().toISOString();
+    t.updatedAt = stamp(t.updatedAt);
     t.deleted = false;
     t.dirty = true;
     t.syncError = '';
@@ -346,7 +560,7 @@
     var t = db.tx[id];
     if (!t) return;
     t.deleted = true;
-    t.updatedAt = new Date().toISOString();
+    t.updatedAt = stamp(t.updatedAt);
     t.dirty = true;
     t.syncError = '';
   }
@@ -419,6 +633,8 @@
       db.categories = res.categories || [];
       db.fees = res.fees || [];
       db.lastSync = new Date().toISOString();
+      db.srvVersion = res.version || 1;
+      if (res.sheet) db.sheet = { name: res.sheet.name, url: res.sheet.url, rows: res.sheet.rows, live: res.sheet.live, at: db.lastSync };
       if (res.serverTime) db.skewMs = Date.parse(res.serverTime) - Date.now();
 
       var stillDirty = Object.keys(db.tx).some(function (id) { return db.tx[id].dirty; });
@@ -467,7 +683,8 @@
     ITER: ITER, round2: round2, fmtMoney: fmtMoney, todayStr: todayStr, validDate: validDate, monthOf: monthOf,
     addMonths: addMonths, monthLabel: monthLabel, daysInMonth: daysInMonth, dayLabel: dayLabel, uid: uid,
     b64enc: b64enc, b64dec: b64dec, deriveKey: deriveKey, encryptJSON: encryptJSON, decryptJSON: decryptJSON,
-    makeVault: makeVault, emptyDb: emptyDb, ensureDb: ensureDb, liveTx: liveTx, pendingCount: pendingCount,
+    makeVault: makeVault, emptyDb: emptyDb, ensureDb: ensureDb, liveTx: liveTx, pendingCount: pendingCount, rejectedTx: rejectedTx,
+    report: report, lastDays: lastDays, weekdayOf: weekdayOf,
     percentFor: percentFor, feeFor: feeFor, activeWallets: activeWallets, categoriesFor: categoriesFor,
     balances: balances, monthSummary: monthSummary, lastMonths: lastMonths, filterTx: filterTx,
     groupByDate: groupByDate, filteredTotals: filteredTotals, checkInput: checkInput, saveTx: saveTx,
