@@ -3,8 +3,8 @@
   'use strict';
 
   var SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_GaONuNDMJ_bg3dfXyyqlMYgwU5DVXplSPG3gUaEeYgHjwyWdwFVF4ygzCQmlorUy2g/exec';
-  var VERSION = '1.1';
-  var NEED_SCRIPT = 2;          // the script version this app expects
+  var VERSION = '1.2';
+  var NEED_SCRIPT = 3;          // the script version this app expects
   var LOGIN_SYNC_MS = 8000;     // how long sign-in waits for the first sync
 
   var vault = MT.makeVault(window.localStorage);
@@ -17,6 +17,7 @@
     hist: { type: '', category: '', wallet: '', q: '' },
     rscope: 'month', rm: MT.monthOf(MT.todayStr()), ry: MT.todayStr().slice(0, 4), rsel: null,
     form: null, editId: null, formErr: '', confirmDelete: false,
+    wtab: 'loans', person: null, lf: null, lEditId: null, lback: 'worth', lErr: '', af: null, aEditId: null, aErr: '',
     syncing: false, syncError: '', syncErrorText: '', syncAgain: false, enter: false,
     lockMsg: '', busy: false, resetAsk: false, confirmReset: false, pwErr: ''
   };
@@ -44,7 +45,11 @@
     key: '<circle cx="8" cy="15" r="4"/><line x1="10.85" y1="12.15" x2="21" y2="2"/><line x1="18" y1="5" x2="21" y2="8"/>',
     clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
     trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/>',
-    refresh: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>'
+    refresh: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+    worth: '<path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/>',
+    people: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    plus2: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'
   };
   function ic(name) { return '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">' + ICONS[name] + '</svg>'; }
 
@@ -91,19 +96,33 @@
     return '<span class="bubble' + (small ? ' sm' : '') + '" style="--h:' + hueOf(n) + '" aria-hidden="true">' +
       (emojiFor(n) || esc(Array.from(n)[0].toUpperCase())) + '</span>';
   }
+  function personBubble(name, small) {
+    var n = String(name || '?').trim() || '?';
+    return '<span class="bubble' + (small ? ' sm' : '') + '" style="--h:' + hueOf(n.toLowerCase()) + '" aria-hidden="true">' + esc(Array.from(n)[0].toUpperCase()) + '</span>';
+  }
   function bubble(t, small) {
     if (t.type === 'transfer') return '<span class="bubble' + (small ? ' sm' : '') + '" style="--h:215" aria-hidden="true">' + ic('swap') + '</span>';
+    if (MT.isLoanType(t.type)) return personBubble(t.person, small);
     return catBubble(t.category, small);
   }
 
-  // Each wallet keeps its own colour: Cash amber, MFS pink, Bank blue, then violet and grey.
-  function wcolor(name) {
-    var k = String(name).toLowerCase();
+  // Each group keeps its own colour: Cash amber, MFS pink, Bank blue, then violet and grey.
+  // Accounts in the same group are lighter shades of it.
+  function groupColor(g) {
+    var k = String(g).toLowerCase();
     if (k === 'cash') return 'var(--w-cash)';
     if (k === 'mfs') return 'var(--w-mfs)';
     if (k === 'bank') return 'var(--w-bank)';
-    var others = S.db.wallets.map(function (w) { return w.name; }).filter(function (n) { return ['cash', 'mfs', 'bank'].indexOf(n.toLowerCase()) < 0; });
-    return others.indexOf(name) === 0 ? 'var(--w-x)' : 'var(--w-n)';
+    var others = [];
+    S.db.wallets.forEach(function (w) { var x = MT.groupOfWallet(w); if (MT.GROUP_ORDER.indexOf(x) < 0 && others.indexOf(x) < 0) others.push(x); });
+    return others.indexOf(g) === 0 ? 'var(--w-x)' : 'var(--w-n)';
+  }
+  function wcolor(name) {
+    var g = MT.groupOf(S.db, name), base = groupColor(g);
+    var mates = S.db.wallets.filter(function (w) { return MT.groupOfWallet(w) === g; }).map(function (w) { return w.name; });
+    var idx = mates.indexOf(name);
+    if (idx <= 0) return base;
+    return 'color-mix(in srgb,' + base + ' ' + Math.max(40, 100 - idx * 24) + '%,#fff)';
   }
 
   var SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -160,9 +179,10 @@
 
   function rejectText(code) {
     return ({
-      bad_date: 'the date is not valid', bad_amount: 'the amount is not valid', bad_wallet: 'no wallet was set',
-      bad_toWallet: 'the destination wallet is missing or the same as the source', bad_category: 'no category was set',
-      bad_type: 'the type is not valid', bad_id: 'the entry id is not valid', bad_updatedAt: 'the edit time is not valid', bad_fee: 'the charge is not valid'
+      bad_date: 'the date is not valid', bad_amount: 'the amount is not valid', bad_wallet: 'no account was set',
+      bad_toWallet: 'the destination account is missing or the same as the source', bad_category: 'no category was set',
+      bad_type: 'the type is not valid', bad_id: 'the entry id is not valid', bad_updatedAt: 'the edit time is not valid', bad_fee: 'the charge is not valid',
+      bad_person: 'the person’s name is missing', bad_due: 'the due date is not valid', bad_name: 'the name is missing', bad_value: 'the value is not valid'
     })[code] || code;
   }
 
@@ -206,7 +226,7 @@
     if (!document.getElementById('view')) return;   // still on the sign-in screen
     renderStatus();
     if (S.view === 'history') renderHistoryBody();
-    else if (S.view === 'home' || S.view === 'reports' || S.view === 'settings') renderView();
+    else if (['home', 'reports', 'settings', 'worth', 'person'].indexOf(S.view) >= 0) renderView();
   }
 
   window.addEventListener('online', function () { renderStatus(); if (S.unlocked) scheduleSync(300); });
@@ -246,6 +266,7 @@
     var tEl = document.getElementById('toast'); if (tEl) tEl.classList.remove('on');
     S.unlocked = false; S.db = null; S.key = null; S.password = null;
     S.form = null; S.editId = null; S.view = 'home'; S.lockMsg = ''; S.resetAsk = false; S.syncError = '';
+    S.lf = null; S.lEditId = null; S.af = null; S.aEditId = null; S.person = null; S.wtab = 'loans'; S.lErr = ''; S.aErr = '';
     S.confirmReset = false; S.confirmDelete = false; S.syncing = false; S.enter = false; S.rsel = null;
     S.hist = { type: '', category: '', wallet: '', q: '' };
     S.ym = MT.monthOf(MT.todayStr());
@@ -366,18 +387,20 @@
 
   // ------------------------------------------------------------ shell
 
-  var TITLES = { home: 'MoneyTrack', history: 'History', add: 'Add transaction', reports: 'Reports', settings: 'Settings', password: 'Change password' };
+  var TITLES = { home: 'MoneyTrack', history: 'History', add: 'Add transaction', reports: 'Reports', settings: 'Settings', password: 'Change password',
+    worth: 'Net worth', person: 'Loan', loan: 'Loan entry', asset: 'Asset' };
 
   function render() {
     if (!S.unlocked) { renderLock(); return; }
     document.body.classList.remove('locked');
     if (!document.getElementById('view')) {
-      app.innerHTML = '<div id="top"><div><h1 id="title"></h1><small id="sub"></small></div><button class="pill" id="pill" data-act="pill"></button></div>' +
+      app.innerHTML = '<div id="top"><div><h1 id="title"></h1><small id="sub"></small></div><div class="topr"><button class="pill" id="pill" data-act="pill"></button>' +
+        '<button class="gear" data-go="settings" data-nav="settings" aria-label="Settings">' + ic('gear') + '</button></div></div>' +
         '<main id="view"></main>' +
         '<nav id="nav" aria-label="Main">' +
         navBtn('home', 'Home', 'home') + navBtn('history', 'History', 'list') +
         '<button class="add" data-go="add" data-nav="add" aria-label="Add transaction"><span class="sq">' + ic('plus') + '</span><span>Add</span></button>' +
-        navBtn('reports', 'Reports', 'chart') + navBtn('settings', 'Settings', 'sliders') + '</nav>';
+        navBtn('worth', 'Worth', 'worth') + navBtn('reports', 'Reports', 'chart') + '</nav>';
     }
     renderView();
   }
@@ -387,7 +410,8 @@
 
   function renderView() {
     if (!S.unlocked || !document.getElementById('view')) return;
-    var title = S.view === 'add' && S.editId ? 'Edit transaction' : TITLES[S.view];
+    var title = S.view === 'add' && S.editId ? 'Edit transaction' : S.view === 'loan' && S.lEditId ? 'Edit loan entry' : S.view === 'asset' && S.aEditId ? 'Edit asset' : TITLES[S.view];
+    if (S.view === 'person') { var pp = personFind(S.person); title = pp ? pp.name : 'Loan'; }
     document.getElementById('title').textContent = title;
     document.getElementById('sub').textContent = S.view === 'home' ? MT.monthLabel(MT.monthOf(MT.todayStr())) : '';
     document.getElementById('sub').style.display = S.view === 'home' ? 'block' : 'none';
@@ -398,9 +422,13 @@
     else if (S.view === 'reports') html = reportsView();
     else if (S.view === 'settings') html = settingsView();
     else if (S.view === 'password') html = passwordView();
+    else if (S.view === 'worth') html = worthView();
+    else if (S.view === 'person') html = personView();
+    else if (S.view === 'loan') html = loanView();
+    else if (S.view === 'asset') html = assetView();
     document.getElementById('view').innerHTML = html;
     if (S.view === 'home') S.enter = false;
-    var navKey = S.view === 'password' ? 'settings' : S.view;
+    var navKey = S.view === 'password' ? 'settings' : (['person', 'loan', 'asset'].indexOf(S.view) >= 0 ? 'worth' : S.view);
     app.querySelectorAll('[data-nav]').forEach(function (b) {
       if (b.getAttribute('data-nav') === navKey) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
     });
@@ -408,7 +436,7 @@
   }
 
   function statusInfo() {
-    var p = MT.pendingCount(S.db), bad = MT.rejectedTx(S.db).length;
+    var p = MT.pendingCount(S.db), bad = MT.rejectedTx(S.db).length + MT.rejectedAssets(S.db).length;
     if (S.syncing) return { t: 'Syncing…', c: '' };
     if (S.syncError) return { t: 'Sync problem', c: 'bad' };
     if (bad) return { t: bad + ' not saved', c: 'bad' };
@@ -431,7 +459,7 @@
     } else if (S.syncError) {
       html += '<div class="banner bad">' + ic('alert') + '<span>' + esc(S.syncErrorText || 'Sync problem') + '</span></div>';
     }
-    var bad = MT.rejectedTx(S.db);
+    var bad = MT.rejectedTx(S.db).concat(MT.rejectedAssets(S.db));
     if (bad.length) {
       html += '<div class="banner bad">' + ic('alert') + '<span>' + bad.length + ' entr' + (bad.length === 1 ? 'y was' : 'ies were') +
         ' not accepted by the sheet, so ' + (bad.length === 1 ? 'it is' : 'they are') + ' not in it yet. <button class="link" data-act="review">Fix ' + (bad.length === 1 ? 'it' : 'the first one') + '</button></span></div>';
@@ -442,12 +470,14 @@
   // ------------------------------------------------------------ home
 
   function txRow(t, showDate) {
-    var isT = t.type === 'transfer';
-    var title = isT ? t.wallet + ' → ' + t.toWallet : t.category;
-    var sub = (showDate ? shortDate(t.date) + ' · ' : '') + (isT ? 'Transfer' : t.wallet) + (t.note ? ' · ' + t.note : '');
+    var isT = t.type === 'transfer', isL = MT.isLoanType(t.type);
+    var title = isT ? t.wallet + ' → ' + t.toWallet : isL ? t.person : t.category;
+    var kind = isT ? 'Transfer' : isL ? MT.LOAN_LABEL[t.type] + ' · ' + t.wallet : t.wallet;
+    var sub = (showDate ? shortDate(t.date) + ' · ' : '') + kind + (t.note ? ' · ' + t.note : '');
     var amt;
     if (t.type === 'income') amt = '<span class="pos">+ ' + money(t.amount) + '</span>';
     else if (t.type === 'expense') amt = '<span class="exp">- ' + money(t.amount) + '</span>';
+    else if (isL) amt = '<span>' + (t.type === 'borrow' || t.type === 'collect' ? '+ ' : '- ') + money(t.amount) + '</span>';
     else amt = '<span>' + money(t.amount) + '</span>' + (t.fee > 0 ? '<small>Fee ' + money(t.fee) + '</small>' : '');
     var flag = t.syncError ? '<span class="dot bad" title="Not accepted by the sheet: ' + esc(rejectText(t.syncError)) + '"></span>'
       : (t.dirty ? '<span class="dot" title="Not synced yet"></span>' : '');
@@ -456,12 +486,12 @@
       '<span class="txa">' + amt + '</span></button>';
   }
 
-  function spineHtml(wallets) {
-    var pos = wallets.filter(function (w) { return w.balance > 0; });
-    var total = pos.reduce(function (a, w) { return a + w.balance; }, 0);
+  function spineHtml(groups) {
+    var pos = groups.filter(function (g) { return g.total > 0; });
+    var total = pos.reduce(function (a, g) { return a + g.total; }, 0);
     if (!total) return '<div class="spine empty" aria-hidden="true"></div>';
     return '<div class="spine' + (S.enter ? ' enter' : '') + '" role="img" aria-label="Share of your money in each wallet">' +
-      pos.map(function (w) { return '<i style="flex:' + w.balance + ';background:' + wcolor(w.name) + '"></i>'; }).join('') + '</div>';
+      pos.map(function (g) { return '<i style="flex:' + g.total + ';background:' + groupColor(g.name) + '"></i>'; }).join('') + '</div>';
   }
 
   function homeView() {
@@ -470,16 +500,18 @@
     var recent = MT.filterTx(db, {}).slice(0, 5);
     var html = syncBanners();
     var shown = b.wallets.filter(function (w) { return w.active || w.balance !== 0; });
-    var posTotal = shown.reduce(function (a, w) { return a + (w.balance > 0 ? w.balance : 0); }, 0);
+    var groups = MT.groupWallets(shown);
+    var posTotal = groups.reduce(function (a, g) { return a + (g.total > 0 ? g.total : 0); }, 0);
+    function share(v) { return posTotal > 0 && v > 0 ? Math.round(v / posTotal * 100) + '%' : ''; }
 
     html += '<section class="hero"><div class="hero-top"><span class="lbl">Total balance</span>' +
       '<button class="eye" data-act="hide" aria-label="' + (hidden() ? 'Show balances' : 'Hide balances') + '">' + ic(hidden() ? 'eyeoff' : 'eye') + '</button></div>' +
       '<p class="big num">' + secret(b.total) + '</p>' +
       '<div class="month"><span class="in">In this month <b>' + money(s.income) + '</b></span><span>Spent <b>' + money(s.expense) + '</b></span></div>';
-    if (shown.length) {
-      html += spineHtml(shown) + '<div class="skey">' + shown.map(function (w) {
-        var pct = posTotal > 0 && w.balance > 0 ? Math.round(w.balance / posTotal * 100) + '%' : '';
-        return '<span><i style="background:' + wcolor(w.name) + '"></i>' + esc(w.name) + (pct ? ' ' + pct : '') + '</span>';
+    if (groups.length) {
+      html += spineHtml(groups) + '<div class="skey">' + groups.map(function (g) {
+        var pct = share(g.total);
+        return '<span><i style="background:' + groupColor(g.name) + '"></i>' + esc(g.name) + (pct ? ' ' + pct : '') + '</span>';
       }).join('') + '</div>';
     }
     html += '</section>';
@@ -489,14 +521,33 @@
       '<button class="q-inc" data-quick="income">' + ic('inn') + 'Income</button>' +
       '<button class="q-tr" data-quick="transfer">' + ic('swap') + 'Transfer</button></div>';
 
-    html += '<div class="sec-h"><h2>Wallets</h2></div>';
-    if (!shown.length) html += '<p class="note">No wallets yet. Sync to load them from your sheet.</p>';
-    else html += '<div class="sheet wallets">' + shown.map(function (w) {
-      var pct = posTotal > 0 && w.balance > 0 ? Math.round(w.balance / posTotal * 100) + '%' : '';
-      return '<button class="wrow" data-wallet-go="' + esc(w.name) + '"><i class="wdot" style="background:' + wcolor(w.name) + '"></i>' +
-        '<span class="wn">' + esc(w.name) + '</span><span class="wshare">' + pct + '</span>' +
-        '<b class="wb' + (w.balance < 0 ? ' neg' : '') + '">' + secret(w.balance) + '</b></button>';
+    html += '<div class="sec-h"><h2>Where your money is</h2></div>';
+    if (!groups.length) html += '<p class="note">No accounts yet. Sync to load them from your sheet.</p>';
+    else html += '<div class="sheet wallets">' + groups.map(function (g) {
+      var single = g.wallets.length === 1 && g.wallets[0].name.toLowerCase() === g.name.toLowerCase();
+      if (single) {
+        var w = g.wallets[0];
+        return '<button class="wrow" data-wallet-go="' + esc(w.name) + '"><i class="wdot" style="background:' + groupColor(g.name) + '"></i>' +
+          '<span class="wn">' + esc(w.name) + '</span><span class="wshare">' + share(w.balance) + '</span>' +
+          '<b class="wb' + (w.balance < 0 ? ' neg' : '') + '">' + secret(w.balance) + '</b></button>';
+      }
+      return '<div class="gblock"><div class="ghrow"><i class="wdot" style="background:' + groupColor(g.name) + '"></i><span class="wn">' + esc(g.name) + '</span>' +
+        '<span class="wshare">' + share(g.total) + '</span><b class="wb' + (g.total < 0 ? ' neg' : '') + '">' + secret(g.total) + '</b></div>' +
+        g.wallets.map(function (w) {
+          return '<button class="wrow acct" data-wallet-go="' + esc(w.name) + '"><i class="wdot sm" style="background:' + wcolor(w.name) + '"></i>' +
+            '<span class="wn">' + esc(w.name) + '</span><b class="wb' + (w.balance < 0 ? ' neg' : '') + '">' + secret(w.balance) + '</b></button>';
+        }).join('') + '</div>';
     }).join('') + '</div>';
+
+    // loans and assets at a glance
+    var L = MT.loanLedger(db, today).totals, A = MT.assetSummary(db);
+    html += '<div class="duo">' +
+      '<button class="mini" data-worth="loans"><small>Loans</small>' +
+      (L.toGet || L.toPay
+        ? (L.toGet ? '<b class="pos">' + secret(L.toGet) + '</b><small>owed to you</small>' : '') + (L.toPay ? '<b class="exp">' + secret(L.toPay) + '</b><small>you owe</small>' : '')
+        : '<b>None open</b><small>Track money you gave or took</small>') + '</button>' +
+      '<button class="mini" data-worth="assets"><small>Assets</small>' +
+      (A.list.length ? '<b>' + secret(A.value) + '</b><small>' + A.list.length + ' item' + (A.list.length === 1 ? '' : 's') + '</small>' : '<b>None yet</b><small>Gold, land, shares…</small>') + '</button></div>';
 
     var week = MT.lastDays(db, 7, today), wmax = 0, wsum = 0;
     week.forEach(function (d) { wmax = Math.max(wmax, d.spent); wsum += d.spent; });
@@ -549,12 +600,14 @@
     if (fn) fn.textContent = feeNote();
   }
 
-  function chipRow(key, items, selected) {
+  function chipRow(key, items, selected, attr) {
+    attr = attr || 'chip';
     if (!items.length) return '<p class="note">None available. Sync to load them from your sheet.</p>';
     return '<div class="chips" role="group">' + items.map(function (n) {
       var lead = key === 'category' ? (emojiFor(n) ? '<span class="e" aria-hidden="true">' + emojiFor(n) + '</span>' : '')
+        : attr === 'achip' ? (ASSET_EMOJI[String(n).toLowerCase()] ? '<span class="e" aria-hidden="true">' + ASSET_EMOJI[String(n).toLowerCase()] + '</span>' : '')
         : '<i class="wdot" style="background:' + wcolor(n) + '"></i>';
-      return '<button type="button" class="chip" data-chip="' + key + '" data-v="' + esc(n) + '" aria-pressed="' + (n === selected) + '">' + lead + esc(n) + '</button>';
+      return '<button type="button" class="chip" data-' + attr + '="' + key + '" data-v="' + esc(n) + '" aria-pressed="' + (n === selected) + '">' + lead + esc(n) + '</button>';
     }).join('') + '</div>';
   }
 
@@ -575,7 +628,7 @@
       '<div class="amount t-' + f.type + '"><span aria-hidden="true">৳</span><input id="f-amount" data-f="amount" inputmode="decimal" placeholder="0" autocomplete="off" aria-label="Amount" value="' + esc(f.amount) + '"></div>';
     if (!isT) {
       html += '<label>Category</label>' + chipRow('category', MT.categoriesFor(db, f.type, f.category), f.category) +
-        '<label>Wallet</label>' + chipRow('wallet', MT.activeWallets(db, f.wallet), f.wallet);
+        '<label>Account</label>' + chipRow('wallet', MT.activeWallets(db, f.wallet), f.wallet);
     } else {
       html += '<label>From</label>' + chipRow('wallet', MT.activeWallets(db, f.wallet), f.wallet) +
         '<label>To</label>' + chipRow('toWallet', MT.activeWallets(db, f.toWallet), f.toWallet) +
@@ -650,6 +703,7 @@
   function openEdit(id) {
     var t = S.db.tx[id];
     if (!t) return;
+    if (MT.isLoanType(t.type)) { openLoanEdit(t); return; }
     S.editId = t.id; S.form = formFromTx(t); S.formErr = ''; S.confirmDelete = false; S.view = 'add';
     render(); window.scrollTo(0, 0);
   }
@@ -674,11 +728,11 @@
     }
     return monthNav() + '<div id="histTotals">' + histTotalsHtml() + '</div>' +
       '<div class="filters">' +
-      '<select data-hf="type" aria-label="Type">' + [['', 'Type'], ['income', 'Income'], ['expense', 'Expense'], ['transfer', 'Transfer']].map(function (o) {
+      '<select data-hf="type" aria-label="Type">' + [['', 'Type'], ['income', 'Income'], ['expense', 'Expense'], ['transfer', 'Transfer'], ['loan', 'Loan']].map(function (o) {
         return '<option value="' + o[0] + '"' + (o[0] === h.type ? ' selected' : '') + '>' + o[1] + '</option>';
       }).join('') + '</select>' +
       '<select data-hf="category" aria-label="Category">' + opts(Object.keys(cats), h.category, 'Category') + '</select>' +
-      '<select data-hf="wallet" aria-label="Wallet">' + opts(wallets, h.wallet, 'Wallet') + '</select></div>' +
+      '<select data-hf="wallet" aria-label="Account">' + opts(wallets, h.wallet, 'Account') + '</select></div>' +
       '<input id="hq" data-hf="q" type="search" placeholder="Search notes" aria-label="Search notes" value="' + esc(h.q) + '">' +
       '<div id="histBody">' + histBodyHtml() + '</div>';
   }
@@ -700,7 +754,7 @@
     if (!list.length) return '<div class="empty"><p>No transactions match.</p></div>';
     var html = '';
     MT.groupByDate(list).forEach(function (g) {
-      html += '<div class="gh"><span>' + MT.dayLabel(g.date) + '</span><span>' + (g.net > 0 ? '+ ' : g.net < 0 ? '- ' : '') + money(Math.abs(g.net)) + '</span></div>' +
+      html += '<div class="gh"><span>' + MT.dayLabel(g.date) + '</span><span>' + (g.net === 0 ? '' : (g.net > 0 ? '+ ' : '- ') + money(Math.abs(g.net))) + '</span></div>' +
         '<div class="sheet list">' + g.items.map(function (x) { return txRow(x, false); }).join('') + '</div>';
     });
     return html;
@@ -901,13 +955,14 @@
     // wallets
     var active = r.wallets.filter(function (w) { return w.in > 0 || w.out > 0 || w.balance !== 0; });
     if (active.length) {
-      html += '<div class="sec-h"><h2>Wallets</h2><small>Balance now, and movement in ' + esc(periodLabel(r)) + '</small></div><div class="sheet">' +
+      html += '<div class="sec-h"><h2>Accounts</h2><small>Balance now, and movement in ' + esc(periodLabel(r)) + '</small></div><div class="sheet">' +
         active.map(function (w) {
           return '<div class="crow"><i class="wdot" style="background:' + wcolor(w.name) + ';margin-top:9px"></i><div class="cmid"><div class="cl"><b>' + esc(w.name) + '</b>' +
             '<span class="amt' + (w.balance < 0 ? ' neg' : '') + '">' + secret(w.balance) + '</span></div>' +
             '<div class="csub num"><span>In ' + plain(w.in) + '</span><span>Out ' + plain(w.out) + '</span><span class="' + (w.net < 0 ? 'neg' : w.net > 0 ? 'pos' : '') + '">Net ' + (w.net > 0 ? '+' : '') + plain(w.net) + '</span></div></div></div>';
         }).join('') + '</div>';
-      if (r.moved > 0) html += '<p class="cap">' + money(r.moved) + ' moved between wallets' + (r.fees > 0 ? ', costing ' + money(r.fees) + ' in charges (' + (r.fees / r.moved * 100).toFixed(1) + '%)' : '') + '.</p>';
+      if (r.counts.loan) html += '<p class="cap">Loan entries change an account’s balance but are not counted as income or spending.</p>';
+      if (r.moved > 0) html += '<p class="cap">' + money(r.moved) + ' moved between accounts' + (r.fees > 0 ? ', costing ' + money(r.fees) + ' in charges (' + (r.fees / r.moved * 100).toFixed(1) + '%)' : '') + '.</p>';
     }
 
     // biggest expenses
@@ -916,7 +971,7 @@
     }
 
     // facts
-    var facts = '<div><span>Entries</span><span>' + r.counts.all + '<small>' + r.counts.expense + ' expense, ' + r.counts.income + ' income, ' + r.counts.transfer + ' transfer</small></span></div>';
+    var facts = '<div><span>Entries</span><span>' + r.counts.all + '<small>' + r.counts.expense + ' expense, ' + r.counts.income + ' income, ' + r.counts.transfer + ' transfer' + (r.counts.loan ? ', ' + r.counts.loan + ' loan' : '') + '</small></span></div>';
     if (r.counts.expense) facts += '<div><span>Average expense</span><span>' + money(r.avgExpense) + '</span></div>';
     if (r.busiest) facts += '<div><span>Costliest day</span><span>' + money(r.busiest.amount) + '<small>' + shortDate(r.busiest.date) + '</small></span></div>';
     if (r.days >= 3) facts += '<div><span>Days with no spending</span><span>' + r.noSpendDays + ' of ' + r.days + '<small>longest run ' + r.longestNoSpend + ' day' + (r.longestNoSpend === 1 ? '' : 's') + '</small></span></div>';
@@ -925,6 +980,353 @@
     if (r.fees > 0) facts += '<div><span>Transfer charges</span><span>' + money(r.fees) + '</span></div>';
     html += '<div class="sec-h"><h2>Quick facts</h2></div><div class="sheet facts">' + facts + '</div>';
     return html;
+  }
+
+  // ------------------------------------------------------------ net worth: loans and assets
+
+  var ASSET_EMOJI = { gold: '🪙', land: '🏞️', property: '🏠', shares: '📈', 'savings certificate': '📜', 'fdr / dps': '🏦', vehicle: '🚗', business: '🏪', other: '📦' };
+  function assetBubble(type, small) {
+    var e = ASSET_EMOJI[String(type || '').toLowerCase()];
+    return '<span class="bubble' + (small ? ' sm' : '') + '" style="--h:' + hueOf(String(type || '?')) + '" aria-hidden="true">' +
+      (e || esc(Array.from(String(type || '?'))[0].toUpperCase())) + '</span>';
+  }
+
+  function personFind(key) {
+    var list = MT.loanLedger(S.db).people;
+    for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
+    return null;
+  }
+
+  function daysUntil(date, today) {
+    var a = date.split('-').map(Number), b = today.split('-').map(Number);
+    return Math.round((Date.UTC(a[0], a[1] - 1, a[2]) - Date.UTC(b[0], b[1] - 1, b[2])) / 86400000);
+  }
+  function dueText(due, today) {
+    var d = daysUntil(due, today);
+    if (d < 0) return { t: 'Overdue by ' + (-d) + ' day' + (d === -1 ? '' : 's'), late: true };
+    if (d === 0) return { t: 'Due today', late: false };
+    if (d === 1) return { t: 'Due tomorrow', late: false };
+    return { t: 'Due ' + shortDate(due), late: false };
+  }
+
+  function scriptBanner() {
+    var db = S.db;
+    if (db.lastSync && db.srvVersion < NEED_SCRIPT) {
+      return '<div class="banner warn">' + ic('alert') + '<span>Loans and assets need the newest script. Paste the latest Code.gs into your Google script and deploy a new version. Until then, assets wait on this device and loan entries may be refused.</span></div>';
+    }
+    return '';
+  }
+
+  function worthView() {
+    var db = S.db, today = MT.todayStr(), w = MT.netWorth(db, today);
+    var html = syncBanners() + scriptBanner();
+    html += '<section class="hero"><div class="hero-top"><span class="lbl">Net worth</span>' +
+      '<button class="eye" data-act="hide" aria-label="' + (hidden() ? 'Show balances' : 'Hide balances') + '">' + ic(hidden() ? 'eyeoff' : 'eye') + '</button></div>' +
+      '<p class="big num">' + secret(w.total) + '</p>' +
+      '<div class="wgrid">' +
+      '<div><small>In accounts</small><b>' + secret(w.wallets) + '</b></div>' +
+      '<div><small>Assets</small><b>' + secret(w.assets) + '</b></div>' +
+      '<div><small>Owed to you</small><b class="g">' + secret(w.toGet) + '</b></div>' +
+      '<div><small>You owe</small><b class="o">' + secret(w.toPay) + '</b></div></div></section>';
+    html += '<div class="seg plain wseg" role="group" aria-label="Section">' + [['loans', 'Loans'], ['assets', 'Assets']].map(function (o) {
+      return '<button type="button" data-wtab="' + o[0] + '" aria-pressed="' + (S.wtab === o[0]) + '">' + o[1] + '</button>';
+    }).join('') + '</div>';
+    return html + (S.wtab === 'assets' ? assetsTab() : loansTab());
+  }
+
+  function loansTab() {
+    var db = S.db, today = MT.todayStr(), L = MT.loanLedger(db, today), T = L.totals;
+    var html = '<div class="sheet"><div class="stats3 two">' +
+      '<div><small>Owed to you</small><b class="pos">' + secret(T.toGet) + '</b>' + (T.overdueGet > 0 ? '<small class="late">' + secret(T.overdueGet) + ' overdue</small>' : '') + '</div>' +
+      '<div><small>You owe</small><b class="exp">' + secret(T.toPay) + '</b>' + (T.overduePay > 0 ? '<small class="late">' + secret(T.overduePay) + ' overdue</small>' : '') + '</div></div></div>';
+    html += '<div class="quick two"><button data-lnew="lend">' + ic('out') + 'I gave</button><button data-lnew="borrow">' + ic('inn') + 'I took</button></div>';
+    if (!L.people.length) {
+      return html + '<div class="sheet empty"><h2>No loans yet</h2><p>Record money you gave or took. Part payments are tracked person by person, and the money moves in and out of the account you choose.</p></div>';
+    }
+    html += '<div class="sec-h"><h2>People</h2><small>' + T.open + ' open</small></div><div class="sheet list">' + L.people.map(function (p) {
+      var amt, lab, cls;
+      if (p.settled) { amt = '<span class="mute">Settled</span>'; lab = ''; }
+      else {
+        var net = p.net;
+        cls = net > 0 ? 'pos' : net < 0 ? 'exp' : '';
+        lab = p.toGet > 0 && p.toPay > 0 ? (net > 0 ? 'owes you, net' : net < 0 ? 'you owe, net' : 'both ways') : (p.toGet > 0 ? 'owes you' : 'you owe');
+        amt = '<span class="' + cls + '">' + secret(Math.abs(net) || Math.max(p.toGet, p.toPay)) + '</span><small>' + lab + '</small>';
+      }
+      var late = p.overdueGet + p.overduePay > 0, sub;
+      if (p.settled) sub = 'Last entry ' + shortDate(p.last);
+      else if (late) sub = '<span class="late">Overdue</span>' + (p.nextDue ? ' · was due ' + shortDate(p.nextDue) : '');
+      else if (p.nextDue) sub = esc(dueText(p.nextDue, today).t);
+      else sub = p.items.length + ' entr' + (p.items.length === 1 ? 'y' : 'ies');
+      return '<button class="tx" data-person="' + esc(p.key) + '">' + personBubble(p.name) +
+        '<span class="txm"><b>' + esc(p.name) + '</b><small>' + sub + '</small></span><span class="txa">' + amt + '</span></button>';
+    }).join('') + '</div>';
+    return html;
+  }
+
+  function personView() {
+    var db = S.db, today = MT.todayStr(), p = personFind(S.person);
+    if (!p) return '<div class="sheet empty"><h2>Nothing here</h2><p>This person has no loan entries.</p><button class="btn primary" data-go="worth">Back to loans</button></div>';
+    var html = syncBanners();
+    var status = p.settled ? 'All settled' : (p.net > 0 ? 'Owes you ' + money(p.net) : p.net < 0 ? 'You owe ' + money(-p.net) : 'Even, both ways');
+    html += '<div class="sheet pad phead">' + personBubble(p.name) + '<div><b class="pname">' + esc(p.name) + '</b><small>' + (hidden() ? 'Hidden' : esc(status)) + '</small></div></div>';
+    var rows = '';
+    if (p.lent > 0) rows += '<div><span>You gave</span><span>' + secret(p.lent) + '</span></div><div><span>Got back</span><span>' + secret(p.collected) + '</span></div>' +
+      '<div><span>Still owed to you</span><span class="' + (p.toGet > 0 ? 'pos' : '') + '">' + secret(p.toGet) + (p.extraIn > 0 ? '<small>' + secret(p.extraIn) + ' more came back than was lent</small>' : '') + '</span></div>';
+    if (p.borrowed > 0) rows += '<div><span>You took</span><span>' + secret(p.borrowed) + '</span></div><div><span>You paid back</span><span>' + secret(p.repaid) + '</span></div>' +
+      '<div><span>You still owe</span><span class="' + (p.toPay > 0 ? 'exp' : '') + '">' + secret(p.toPay) + (p.extraOut > 0 ? '<small>' + secret(p.extraOut) + ' more was paid than borrowed</small>' : '') + '</span></div>';
+    if (rows) html += '<div class="sheet facts" style="margin-top:12px">' + rows + '</div>';
+
+    var qn = esc(p.name), btns = '';
+    if (p.toGet > 0) btns += '<button data-lnew="collect" data-lperson="' + qn + '">' + ic('inn') + 'Got back</button>';
+    if (p.toPay > 0) btns += '<button data-lnew="repay" data-lperson="' + qn + '">' + ic('out') + 'I paid back</button>';
+    btns += '<button data-lnew="lend" data-lperson="' + qn + '">' + ic('out') + 'I gave more</button><button data-lnew="borrow" data-lperson="' + qn + '">' + ic('inn') + 'I took more</button>';
+    html += '<div class="quick two">' + btns + '</div>';
+
+    var open = p.openGet.map(function (o) { return { o: o, kind: 'Gave' }; }).concat(p.openPay.map(function (o) { return { o: o, kind: 'Took' }; }));
+    if (open.length) {
+      html += '<div class="sec-h"><h2>Still open</h2><small>oldest is settled first</small></div><div class="sheet">' + open.map(function (x) {
+        var o = x.o, d = o.due ? dueText(o.due, today) : null;
+        return '<div class="crow"><div class="cmid"><div class="cl"><b>' + x.kind + ' on ' + shortDate(o.date) + '</b><span class="amt ' + (x.kind === 'Gave' ? 'pos' : 'exp') + '">' + secret(o.remaining) + '</span></div>' +
+          '<div class="csub num">' + (o.remaining < o.original ? '<span>of ' + secret(o.original) + '</span>' : '') +
+          (d ? '<span class="' + (d.late ? 'late' : '') + '">' + esc(d.t) + '</span>' : '<span>No due date</span>') + '</div></div></div>';
+      }).join('') + '</div>';
+    }
+    html += '<div class="sec-h"><h2>Entries</h2><small>' + p.items.length + '</small></div><div class="sheet list">' + p.items.map(function (t) { return txRow(t, true); }).join('') + '</div>';
+    return html;
+  }
+
+  // ---- loan form
+
+  function newLoanForm(type, person) {
+    var db = S.db, ws = MT.activeWallets(db);
+    var w = ws.indexOf(db.settings.lastWallet) >= 0 ? db.settings.lastWallet : (ws[0] || '');
+    var f = { type: type || 'lend', person: person || '', amount: '', wallet: w, date: MT.todayStr(), due: '', note: '' };
+    if (person && (f.type === 'collect' || f.type === 'repay')) {
+      var p = personFind(MT.personKey(person));
+      var out = p ? (f.type === 'collect' ? p.toGet : p.toPay) : 0;
+      if (out > 0) f.amount = String(out);
+    }
+    return f;
+  }
+  function openLoan(type, person) {
+    S.lEditId = null; S.lf = newLoanForm(type, person); S.lErr = ''; S.confirmDelete = false;
+    S.lback = S.view === 'person' ? 'person' : 'worth';
+    S.view = 'loan'; render(); window.scrollTo(0, 0);
+  }
+  function openLoanEdit(t) {
+    S.lEditId = t.id; S.lErr = ''; S.confirmDelete = false;
+    S.lf = { type: t.type, person: t.person, amount: String(t.amount), wallet: t.wallet, date: t.date, due: t.due || '', note: t.note };
+    S.lback = S.view === 'person' ? 'person' : (S.view === 'history' ? 'history' : (S.view === 'settings' ? 'settings' : (S.view === 'home' ? 'home' : 'worth')));
+    S.view = 'loan'; render(); window.scrollTo(0, 0);
+  }
+
+  var LOAN_TYPES_UI = [['lend', 'I gave'], ['borrow', 'I took'], ['collect', 'Got back'], ['repay', 'I paid back']];
+
+  function loanHintHtml() {
+    var f = S.lf, name = String(f.person || '').trim();
+    if (!name) return '';
+    var p = personFind(MT.personKey(name)), a = num(f.amount), h = '';
+    if (f.type === 'collect') {
+      if (p && p.toGet > 0) {
+        h = esc(p.name) + ' still owes you ' + money(p.toGet) + '.' + (a > p.toGet ? ' That is more than they owe.' : '') +
+          (a !== p.toGet ? ' <button type="button" class="link" data-lfull="' + p.toGet + '">Use ' + plain(p.toGet) + '</button>' : '');
+      } else h = p ? esc(p.name) + ' does not owe you anything right now.' : 'You have not lent anything to this person yet.';
+    } else if (f.type === 'repay') {
+      if (p && p.toPay > 0) {
+        h = 'You still owe ' + esc(p.name) + ' ' + money(p.toPay) + '.' + (a > p.toPay ? ' That is more than you owe.' : '') +
+          (a !== p.toPay ? ' <button type="button" class="link" data-lfull="' + p.toPay + '">Use ' + plain(p.toPay) + '</button>' : '');
+      } else h = p ? 'You do not owe ' + esc(p.name) + ' anything right now.' : 'You have not borrowed from this person yet.';
+    }
+    return h;
+  }
+  function updateLoanHint() {
+    var el = document.getElementById('lhint');
+    if (el) el.innerHTML = loanHintHtml();
+  }
+
+  function loanView() {
+    if (!S.lf) S.lf = newLoanForm('lend');
+    var f = S.lf, db = S.db, hasDue = f.type === 'lend' || f.type === 'borrow';
+    var yesterday = (function () { var d = new Date(); d.setDate(d.getDate() - 1); return MT.todayStr(d); })();
+    var L = MT.loanLedger(db, MT.todayStr());
+    var help = { lend: 'Money you gave to someone. It leaves the account you pick.', borrow: 'Money someone gave you. It goes into the account you pick.',
+      collect: 'Money that came back to you. It goes into the account you pick.', repay: 'Money you gave back. It leaves the account you pick.' }[f.type];
+    var html = '<form id="loanForm" novalidate>' +
+      '<div class="seg t-loan" role="group" aria-label="Kind of loan entry">' + LOAN_TYPES_UI.map(function (t) {
+        return '<button type="button" data-lseg="' + t[0] + '" aria-pressed="' + (f.type === t[0]) + '">' + t[1] + '</button>';
+      }).join('') + '</div><p class="note">' + esc(help) + '</p>' +
+      '<div class="amount t-loan"><span aria-hidden="true">৳</span><input id="lf-amount" data-lf="amount" inputmode="decimal" placeholder="0" autocomplete="off" aria-label="Amount" value="' + esc(f.amount) + '"></div>' +
+      '<label for="lf-person">Person</label><input id="lf-person" data-lf="person" list="people-list" maxlength="60" autocomplete="off" placeholder="Name" value="' + esc(f.person) + '">' +
+      '<datalist id="people-list">' + MT.personNames(db).map(function (n) { return '<option value="' + esc(n) + '"></option>'; }).join('') + '</datalist>';
+    if (f.type === 'collect' || f.type === 'repay') {
+      var who = L.people.filter(function (p) { return f.type === 'collect' ? p.toGet > 0 : p.toPay > 0; });
+      if (who.length) html += '<div class="chips" style="margin-top:10px">' + who.map(function (p) {
+        return '<button type="button" class="chip" data-lpchip="' + esc(p.name) + '" aria-pressed="' + (MT.personKey(p.name) === MT.personKey(f.person)) + '">' + esc(p.name) + ' · ' + plain(f.type === 'collect' ? p.toGet : p.toPay) + '</button>';
+      }).join('') + '</div>';
+    }
+    html += '<p class="note" id="lhint">' + loanHintHtml() + '</p>' +
+      '<label>Account</label>' + chipRow('wallet', MT.activeWallets(db, f.wallet), f.wallet, 'lchip') +
+      '<label for="lf-date">Date</label>' +
+      '<div class="datechips"><button type="button" class="chip" data-ldatechip="today" aria-pressed="' + (f.date === MT.todayStr()) + '">Today</button>' +
+      '<button type="button" class="chip" data-ldatechip="yesterday" aria-pressed="' + (f.date === yesterday) + '">Yesterday</button></div>' +
+      '<div style="margin-top:8px"><input id="lf-date" data-lf="date" type="date" value="' + esc(f.date) + '"></div>';
+    if (hasDue) {
+      html += '<label for="lf-due">' + (f.type === 'lend' ? 'Expected back by' : 'Pay back by') + ' (optional)</label>' +
+        '<div class="datechips"><button type="button" class="chip" data-ldue="7">In a week</button><button type="button" class="chip" data-ldue="30">In a month</button>' +
+        '<button type="button" class="chip" data-ldue="0">No date</button></div>' +
+        '<div style="margin-top:8px"><input id="lf-due" data-lf="due" type="date" value="' + esc(f.due) + '"></div>';
+    }
+    html += '<label for="lf-note">Note (optional)</label><input id="lf-note" data-lf="note" maxlength="200" autocomplete="off" value="' + esc(f.note) + '">' +
+      '<p class="err" id="lerr" role="alert">' + esc(S.lErr) + '</p>' +
+      '<button class="btn primary block" type="submit">Save</button>';
+    html += '<div style="display:flex;gap:8px;margin-top:10px"><button type="button" class="btn" style="flex:1" data-act="cancel-loan">Cancel</button>' +
+      (S.lEditId ? '<button type="button" class="btn danger" style="flex:1" data-act="delete-loan">' + (S.confirmDelete ? 'Tap again to delete' : 'Delete') + '</button>' : '') + '</div>';
+    return html + '</form>';
+  }
+
+  function backFromLoan() {
+    var back = S.lback;
+    S.lf = null; S.lEditId = null; S.lErr = ''; S.confirmDelete = false;
+    if (back === 'person' && personFind(S.person)) S.view = 'person';
+    else if (back === 'history') S.view = 'history';
+    else if (back === 'settings') S.view = 'settings';
+    else if (back === 'home') S.view = 'home';
+    else S.view = 'worth';
+    S.wtab = 'loans';
+    render(); window.scrollTo(0, 0);
+  }
+
+  function onSaveLoan() {
+    var f = S.lf;
+    var payload = { type: f.type, person: f.person, amount: num(f.amount), wallet: f.wallet, date: f.date, due: f.type === 'lend' || f.type === 'borrow' ? f.due : '', note: f.note, category: '', toWallet: '', fee: '' };
+    var msg = MT.checkInput(S.db, payload);
+    if (msg) { S.lErr = msg; var e = document.getElementById('lerr'); if (e) e.textContent = msg; return; }
+    var more = '';
+    var p = personFind(MT.personKey(payload.person));
+    if (!S.lEditId && p) {
+      if (f.type === 'collect' && payload.amount > p.toGet) more = ' That is more than was owed.';
+      if (f.type === 'repay' && payload.amount > p.toPay) more = ' That is more than you owed.';
+    }
+    var t = MT.saveTx(S.db, payload, S.lEditId);
+    persist();
+    if (S.lback === 'person' && S.person && !personFind(S.person)) S.person = MT.personKey(t.person);
+    backFromLoan();
+    toast((navigator.onLine ? 'Saved' : 'Saved on this device. Will sync when online.') + more);
+    scheduleSync(500);
+  }
+
+  function onDeleteLoan() {
+    if (!S.confirmDelete) { S.confirmDelete = true; renderView(); return; }
+    MT.deleteTx(S.db, S.lEditId);
+    persist();
+    backFromLoan();
+    toast('Deleted');
+    scheduleSync(500);
+  }
+
+  function onLoanField(el) {
+    var f = S.lf;
+    if (!f) return;
+    var k = el.getAttribute('data-lf');
+    f[k] = el.value;
+    S.lErr = '';
+    var err = document.getElementById('lerr'); if (err) err.textContent = '';
+    if (k === 'amount' || k === 'person') updateLoanHint();
+    if (k === 'person') {
+      app.querySelectorAll('[data-lpchip]').forEach(function (c) { c.setAttribute('aria-pressed', String(MT.personKey(c.getAttribute('data-lpchip')) === MT.personKey(f.person))); });
+    }
+    if (k === 'date') {
+      var y = new Date(); y.setDate(y.getDate() - 1);
+      app.querySelectorAll('[data-ldatechip]').forEach(function (c) {
+        c.setAttribute('aria-pressed', String(f.date === (c.getAttribute('data-ldatechip') === 'today' ? MT.todayStr() : MT.todayStr(y))));
+      });
+    }
+  }
+
+  // ---- assets
+
+  function assetsTab() {
+    var db = S.db, A = MT.assetSummary(db);
+    var html = '<button class="btn primary block" style="margin-top:12px" data-anew="1">' + ic('plus2') + ' Add asset</button>';
+    if (!A.list.length) {
+      return html + '<div class="sheet empty" style="margin-top:12px"><h2>No assets yet</h2><p>List things you own, such as gold, land, shares or savings certificates. You enter their current value yourself and update it when prices change.</p></div>';
+    }
+    var pct = A.gainPct;
+    html += '<div class="sheet" style="margin-top:12px"><div class="stats3 two">' +
+      '<div><small>Worth now</small><b>' + secret(A.value) + '</b></div>' +
+      '<div><small>Gain or loss</small>' + (A.cost > 0
+        ? '<b class="' + (A.gain < 0 ? 'neg' : A.gain > 0 ? 'pos' : '') + '">' + (hidden() ? '৳ ••••' : (A.gain > 0 ? '+ ' : A.gain < 0 ? '- ' : '') + money(Math.abs(A.gain))) + '</b>' +
+          (!hidden() ? '<small>' + (pct >= 0 ? '+' : '') + pct.toFixed(0) + '% on ' + money(A.cost) + ' paid</small>' : '')
+        : '<b class="mute">—</b><small>Add what you paid to see it</small>') + '</div></div></div>';
+    A.groups.forEach(function (g) {
+      var share = A.value > 0 ? Math.round(g.value / A.value * 100) : 0;
+      html += '<div class="sec-h"><h2>' + esc(g.type) + '</h2><small class="num">' + secret(g.value) + (share ? ' · ' + share + '%' : '') + '</small></div><div class="sheet list">' +
+        g.items.map(assetRow).join('') + '</div>';
+    });
+    return html + '<p class="note" style="margin:12px 4px 0">Values are the ones you enter. Tap an asset to update its value.' + (A.unpriced ? ' Gain or loss leaves out ' + A.unpriced + ' item' + (A.unpriced === 1 ? '' : 's') + ' with no price.' : '') + '</p>';
+  }
+
+  function assetRow(a) {
+    var gain = a.buyPrice > 0 ? MT.round2(a.value - a.buyPrice) : null;
+    var flag = a.syncError ? '<span class="dot bad" title="Not accepted by the sheet: ' + esc(rejectText(a.syncError)) + '"></span>' : (a.dirty ? '<span class="dot" title="Not synced yet"></span>' : '');
+    var sub = (a.buyPrice > 0 ? 'Paid ' + plain(a.buyPrice) + ' · ' : '') + (a.valueDate ? 'as of ' + shortDate(a.valueDate) : 'value set') + (a.note ? ' · ' + a.note : '');
+    return '<button class="tx" data-asset="' + esc(a.id) + '">' + assetBubble(a.type) + '<span class="txm"><b>' + esc(a.name) + flag + '</b><small>' + esc(sub) + '</small></span>' +
+      '<span class="txa"><span>' + secret(a.value) + '</span>' + (gain !== null && !hidden() ? '<small class="' + (gain < 0 ? 'neg' : gain > 0 ? 'pos' : '') + '">' + (gain > 0 ? '+ ' : gain < 0 ? '- ' : '') + plain(Math.abs(gain)) + '</small>' : '') + '</span></button>';
+  }
+
+  function openAsset(id) {
+    var a = id ? S.db.assets[id] : null;
+    S.aEditId = a ? a.id : null; S.aErr = ''; S.confirmDelete = false;
+    S.af = a ? { name: a.name, type: a.type, value: String(a.value), buyPrice: a.buyPrice ? String(a.buyPrice) : '', buyDate: a.buyDate || '', note: a.note || '' }
+      : { name: '', type: MT.assetTypes(S.db)[0] || 'Other', value: '', buyPrice: '', buyDate: '', note: '' };
+    S.view = 'asset'; render(); window.scrollTo(0, 0);
+  }
+
+  function assetView() {
+    if (!S.af) openAsset(null);
+    var f = S.af, db = S.db, cur = S.aEditId ? db.assets[S.aEditId] : null;
+    var html = '';
+    if (cur && cur.syncError) html += '<div class="banner bad">' + ic('alert') + '<span>The sheet did not accept this asset because ' + esc(rejectText(cur.syncError)) + '. Check it and save again.</span></div>';
+    html += '<form id="assetForm" novalidate>' +
+      '<label for="af-name" style="margin-top:4px">Name</label><input id="af-name" data-af="name" maxlength="60" autocomplete="off" placeholder="For example, Gold ring or Plot in Rajshahi" value="' + esc(f.name) + '">' +
+      '<label>Type</label>' + chipRow('type', MT.assetTypes(db, f.type), f.type, 'achip') +
+      '<label for="af-value">Worth now (৳)</label><div class="amount t-asset" style="margin-top:0"><span aria-hidden="true">৳</span><input id="af-value" data-af="value" inputmode="decimal" placeholder="0" autocomplete="off" value="' + esc(f.value) + '"></div>' +
+      (cur && cur.valueDate ? '<p class="note">Value last set on ' + esc(shortDate(cur.valueDate)) + '. Change it any time prices move.</p>' : '<p class="note">Your own estimate or the market price today.</p>') +
+      '<label for="af-price">What you paid (৳, optional)</label><input id="af-price" data-af="buyPrice" inputmode="decimal" autocomplete="off" value="' + esc(f.buyPrice) + '">' +
+      '<label for="af-date">Bought on (optional)</label><input id="af-date" data-af="buyDate" type="date" value="' + esc(f.buyDate) + '">' +
+      '<label for="af-note">Note (optional)</label><input id="af-note" data-af="note" maxlength="200" autocomplete="off" value="' + esc(f.note) + '">' +
+      '<p class="err" id="aerr" role="alert">' + esc(S.aErr) + '</p>' +
+      '<button class="btn primary block" type="submit">Save asset</button>' +
+      '<div style="display:flex;gap:8px;margin-top:10px"><button type="button" class="btn" style="flex:1" data-act="cancel-asset">Cancel</button>' +
+      (S.aEditId ? '<button type="button" class="btn danger" style="flex:1" data-act="delete-asset">' + (S.confirmDelete ? 'Tap again to delete' : 'Delete') + '</button>' : '') + '</div></form>';
+    return html;
+  }
+
+  function backFromAsset() {
+    S.af = null; S.aEditId = null; S.aErr = ''; S.confirmDelete = false;
+    S.view = 'worth'; S.wtab = 'assets';
+    render(); window.scrollTo(0, 0);
+  }
+
+  function onSaveAsset() {
+    var f = S.af;
+    var payload = { name: f.name, type: f.type, value: f.value === '' ? '' : num(f.value), buyPrice: f.buyPrice === '' ? '' : num(f.buyPrice), buyDate: f.buyDate, note: f.note };
+    var msg = MT.checkAsset(payload);
+    if (msg) { S.aErr = msg; var e = document.getElementById('aerr'); if (e) e.textContent = msg; return; }
+    MT.saveAsset(S.db, payload, S.aEditId);
+    persist();
+    backFromAsset();
+    toast(navigator.onLine ? 'Saved' : 'Saved on this device. Will sync when online.');
+    scheduleSync(500);
+  }
+
+  function onDeleteAsset() {
+    if (!S.confirmDelete) { S.confirmDelete = true; renderView(); return; }
+    MT.deleteAsset(S.db, S.aEditId);
+    persist();
+    backFromAsset();
+    toast('Deleted');
+    scheduleSync(500);
   }
 
   // ------------------------------------------------------------ settings
@@ -936,7 +1338,7 @@
       html += '<div class="banner warn">' + ic('clock') + '<span>This device’s clock is off by about ' + Math.round(Math.abs(db.skewMs) / 60000) + ' minutes. Edits are ordered by time, so please fix the clock.</span></div>';
     }
     if (db.lastSync && db.srvVersion < NEED_SCRIPT) {
-      html += '<div class="banner warn">' + ic('alert') + '<span>Your Google script is an older version. Paste the newest Code.gs into it and deploy a new version, so entries are checked after they are written.</span></div>';
+      html += '<div class="banner warn">' + ic('alert') + '<span>Your Google script is an older version. Paste the newest Code.gs into it and deploy a new version. Loans and assets need it.</span></div>';
     }
 
     // the sheet
@@ -946,14 +1348,15 @@
       (url ? '<a class="link" href="' + esc(url) + '" target="_blank" rel="noopener">Open</a>' : '') + '</div>' +
       '<div class="row"><span>Entries in the sheet</span><small class="num">' + (sh ? sh.live : '—') + '</small></div>' +
       '<div class="row"><span>Entries on this device</span><small class="num">' + MT.liveTx(db).length + '</small></div>' +
+      '<div class="row"><span>Assets (sheet / device)</span><small class="num">' + (sh && sh.assets !== undefined ? sh.assets : '—') + ' / ' + MT.liveAssets(db).length + '</small></div>' +
       '<div class="row"><span>Waiting to sync</span><small class="num">' + p + '</small></div>' +
       '<div class="row"><span>Last synced</span><small>' + esc(timeAgo(db.lastSync)) + '</small></div>' +
       '<div class="row"><button class="rowbtn" data-act="sync"><span class="lead">' + ic('refresh') + 'Sync now</span><small>' + (S.syncing ? 'Syncing…' : '') + '</small></button></div></div>' +
-      '<p class="note" style="margin:8px 4px 0">Wallets, categories, and transfer charges are edited in your Google Sheet and reach this app at the next sync.</p>';
+      '<p class="note" style="margin:8px 4px 0">Accounts (with their group), categories, asset types, and transfer charges are edited in your Google Sheet and reach this app at the next sync.</p>';
 
-    var bad = MT.rejectedTx(db);
-    if (bad.length) {
-      html += '<h3>Needs attention</h3><div class="sheet list">' + bad.map(function (t) { return txRow(t, true); }).join('') + '</div>' +
+    var bad = MT.rejectedTx(db), badA = MT.rejectedAssets(db);
+    if (bad.length || badA.length) {
+      html += '<h3>Needs attention</h3><div class="sheet list">' + bad.map(function (t) { return txRow(t, true); }).join('') + badA.map(assetRow).join('') + '</div>' +
         '<p class="note" style="margin:8px 4px 0">The sheet refused these because the data was not valid. Open one, check it, and save again.</p>';
     }
 
@@ -1015,13 +1418,15 @@
   function go(v) {
     if (v === 'add' && S.view !== 'add') { S.editId = null; S.form = newForm(); S.formErr = ''; S.confirmDelete = false; }
     if (v !== 'add' && S.view === 'add') { S.form = null; S.editId = null; S.confirmDelete = false; }
+    if (v !== 'loan' && S.view === 'loan') { S.lf = null; S.lEditId = null; S.lErr = ''; S.confirmDelete = false; }
+    if (v !== 'asset' && S.view === 'asset') { S.af = null; S.aEditId = null; S.aErr = ''; S.confirmDelete = false; }
     if (v !== 'settings') S.confirmReset = false;
     S.view = v;
     render();
     window.scrollTo(0, 0);
   }
 
-  var CLICKABLE = '[data-act],[data-go],[data-edit],[data-chip],[data-seg],[data-lockmin],[data-pick],[data-quick],[data-rscope],[data-datechip],[data-wallet-go]';
+  var CLICKABLE = '[data-act],[data-go],[data-edit],[data-chip],[data-seg],[data-lockmin],[data-pick],[data-quick],[data-rscope],[data-datechip],[data-wallet-go],[data-wtab],[data-worth],[data-person],[data-lnew],[data-lseg],[data-lchip],[data-lpchip],[data-ldatechip],[data-ldue],[data-lfull],[data-asset],[data-anew],[data-achip]';
 
   app.addEventListener('click', function (e) {
     var el = e.target.closest(CLICKABLE);
@@ -1035,6 +1440,50 @@
       S.hist = { type: '', category: '', wallet: el.getAttribute('data-wallet-go'), q: '' };
       S.ym = MT.monthOf(MT.todayStr());
       go('history');
+      return;
+    }
+    if (el.hasAttribute('data-wtab')) { S.wtab = el.getAttribute('data-wtab'); renderView(); return; }
+    if (el.hasAttribute('data-worth')) { S.wtab = el.getAttribute('data-worth'); go('worth'); return; }
+    if (el.hasAttribute('data-person')) { S.person = el.getAttribute('data-person'); go('person'); return; }
+    if (el.hasAttribute('data-lnew')) { openLoan(el.getAttribute('data-lnew'), el.getAttribute('data-lperson') || ''); return; }
+    if (el.hasAttribute('data-anew')) { openAsset(null); return; }
+    if (el.hasAttribute('data-asset')) { openAsset(el.getAttribute('data-asset')); return; }
+    if (el.hasAttribute('data-lseg')) {
+      var lt = el.getAttribute('data-lseg');
+      if (S.lf.type !== lt) {
+        S.lf.type = lt; S.lErr = '';
+        if (lt === 'collect' || lt === 'repay') S.lf.due = '';
+        renderView();
+      }
+      return;
+    }
+    if (el.hasAttribute('data-lchip')) { S.lf.wallet = el.getAttribute('data-v'); S.lErr = ''; renderView(); return; }
+    if (el.hasAttribute('data-achip')) { S.af.type = el.getAttribute('data-v'); S.aErr = ''; renderView(); return; }
+    if (el.hasAttribute('data-lpchip')) {
+      S.lf.person = el.getAttribute('data-lpchip');
+      var pp = personFind(MT.personKey(S.lf.person));
+      var owe = pp ? (S.lf.type === 'collect' ? pp.toGet : pp.toPay) : 0;
+      if (owe > 0 && (S.lf.amount === '' || num(S.lf.amount) > owe)) S.lf.amount = String(owe);
+      S.lErr = ''; renderView(); return;
+    }
+    if (el.hasAttribute('data-lfull')) {
+      S.lf.amount = el.getAttribute('data-lfull');
+      var la = document.getElementById('lf-amount'); if (la) la.value = S.lf.amount;
+      updateLoanHint(); return;
+    }
+    if (el.hasAttribute('data-ldatechip')) {
+      var ld = new Date();
+      if (el.getAttribute('data-ldatechip') === 'yesterday') ld.setDate(ld.getDate() - 1);
+      S.lf.date = MT.todayStr(ld); S.lErr = '';
+      var ldi = document.getElementById('lf-date'); if (ldi) ldi.value = S.lf.date;
+      app.querySelectorAll('[data-ldatechip]').forEach(function (c) { c.setAttribute('aria-pressed', String(c === el)); });
+      return;
+    }
+    if (el.hasAttribute('data-ldue')) {
+      var n = Number(el.getAttribute('data-ldue'));
+      if (n === 0) S.lf.due = '';
+      else { var base = MT.validDate(S.lf.date) ? new Date(S.lf.date + 'T00:00:00') : new Date(); base.setDate(base.getDate() + n); S.lf.due = MT.todayStr(base); }
+      var dui = document.getElementById('lf-due'); if (dui) dui.value = S.lf.due;
       return;
     }
     if (el.hasAttribute('data-rscope')) { S.rscope = el.getAttribute('data-rscope'); S.rsel = null; renderView(); return; }
@@ -1089,7 +1538,7 @@
       case 'hide': S.db.settings.hideBalance = !S.db.settings.hideBalance; persist(); renderView(); break;
       case 'reset-ask': S.resetAsk = true; renderLock(); break;
       case 'reset-do': vault.wipe(); clearThrottle(); S.resetAsk = false; S.lockMsg = ''; renderLock(); break;
-      case 'pill': if (S.syncError || MT.rejectedTx(S.db).length) go('settings'); else doSync(true); break;
+      case 'pill': if (S.syncError || MT.rejectedTx(S.db).length || MT.rejectedAssets(S.db).length) go('settings'); else doSync(true); break;
       case 'mprev': S.ym = MT.addMonths(S.ym, -1); renderView(); break;
       case 'mnext': S.ym = MT.addMonths(S.ym, 1); renderView(); break;
       case 'rprev':
@@ -1099,7 +1548,15 @@
         if (S.rscope === 'month') { if (S.rm < MT.monthOf(MT.todayStr())) S.rm = MT.addMonths(S.rm, 1); }
         else if (S.ry < MT.todayStr().slice(0, 4)) S.ry = String(Number(S.ry) + 1);
         S.rsel = null; renderView(); break;
-      case 'review': { var first = MT.rejectedTx(S.db)[0]; if (first) openEdit(first.id); break; }
+      case 'review': {
+        var first = MT.rejectedTx(S.db)[0], firstA = MT.rejectedAssets(S.db)[0];
+        if (first) openEdit(first.id); else if (firstA) openAsset(firstA.id);
+        break;
+      }
+      case 'cancel-loan': backFromLoan(); break;
+      case 'delete-loan': onDeleteLoan(); break;
+      case 'cancel-asset': backFromAsset(); break;
+      case 'delete-asset': onDeleteAsset(); break;
       case 'cancel-edit': go('history'); break;
       case 'delete': onDelete(); break;
       case 'to-password': S.pwErr = ''; S.view = 'password'; render(); window.scrollTo(0, 0); break;
@@ -1116,6 +1573,13 @@
   function onInput(e) {
     var t = e.target;
     if (t.hasAttribute('data-f')) { onField(t); return; }
+    if (t.hasAttribute('data-lf')) { onLoanField(t); return; }
+    if (t.hasAttribute('data-af')) {
+      if (!S.af) return;
+      S.af[t.getAttribute('data-af')] = t.value; S.aErr = '';
+      var ae = document.getElementById('aerr'); if (ae) ae.textContent = '';
+      return;
+    }
     if (t.hasAttribute('data-hf')) {
       S.hist[t.getAttribute('data-hf')] = t.value;
       renderHistoryBody();
@@ -1128,6 +1592,8 @@
     e.preventDefault();
     if (e.target.id === 'lockForm') onLockSubmit();
     else if (e.target.id === 'addForm') onSave();
+    else if (e.target.id === 'loanForm') onSaveLoan();
+    else if (e.target.id === 'assetForm') onSaveAsset();
     else if (e.target.id === 'pwForm') savePassword();
   });
 
