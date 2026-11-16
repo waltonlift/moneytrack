@@ -271,6 +271,43 @@ a.link{text-decoration:none}
 .facts span:last-child{text-align:right;font-weight:600}
 .facts small{display:block;font-weight:400}
 
+/* accounts in groups, net worth, loans, assets */
+.topr{display:flex;align-items:center;gap:8px}
+.gear{background:var(--sheet);border:1px solid var(--hair);border-radius:50%;width:38px;height:38px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--ink2)}
+.gear svg{width:19px;height:19px}
+.gear[aria-current=page]{color:var(--brand);border-color:var(--sel-line);background:var(--sel-bg)}
+.gblock{border-bottom:1px solid var(--line)}
+.gblock:last-child{border-bottom:0}
+.ghrow{display:flex;align-items:center;gap:12px;padding:14px 16px 8px}
+.ghrow .wn{font-weight:650}
+.ghrow .wb{font-weight:650}
+.wrow.acct{padding:9px 16px 9px 40px;border-bottom:0}
+.wrow.acct:last-child{padding-bottom:14px}
+.wrow.acct .wn{font-weight:500;color:var(--ink2)}
+.wdot.sm{width:9px;height:9px}
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.mini{background:var(--sheet);border:1px solid var(--hair);border-radius:var(--r-sheet);padding:13px 14px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:1px}
+.mini>small:first-child{font-weight:600;color:var(--ink2);margin-bottom:3px}
+.mini b{font-size:17px;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.mini b+small{margin-bottom:3px}
+.hero .wgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px;margin-top:16px}
+.hero .wgrid small{display:block;color:rgba(255,255,255,.72);font-size:13px}
+.hero .wgrid b{color:#fff;font-size:16.5px;font-variant-numeric:tabular-nums;font-weight:650}
+.hero .wgrid b.g{color:var(--mint)}
+.hero .wgrid b.o{color:#ffb38f}
+.wseg{margin:14px 0 12px}
+.quick.two{grid-template-columns:1fr 1fr}
+.stats3.two{grid-template-columns:1fr 1fr}
+.late{color:var(--bad);font-weight:600}
+.mute{color:var(--mute);font-weight:500}
+.phead{display:flex;align-items:center;gap:14px;margin-top:4px}
+.phead .bubble{width:52px;height:52px;border-radius:17px;font-size:22px}
+.pname{font-size:19px;display:block;line-height:1.25}
+.seg.t-loan button{font-size:14px;padding:6px 4px}
+.seg.t-loan button[aria-pressed=true]{color:var(--brand)}
+.amount.t-loan span,.amount.t-asset span{color:var(--brand)}
+.facts small.late,.stats3 small.late{display:block}
+
 /* lock screen */
 .lock{max-width:380px;margin:0 auto;padding:max(12vh,48px) 26px 28px;text-align:center;color:#fff}
 .lock .logo{width:68px;height:68px;border-radius:20px;background:rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;margin:0 auto 18px}
