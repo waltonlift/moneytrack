@@ -278,7 +278,15 @@ a.link{text-decoration:none}
 .gear[aria-current=page]{color:var(--brand);border-color:var(--sel-line);background:var(--sel-bg)}
 .gblock{border-bottom:1px solid var(--line)}
 .gblock:last-child{border-bottom:0}
-.ghrow{display:flex;align-items:center;gap:12px;padding:14px 16px 8px}
+.ghrow{display:flex;align-items:center;gap:10px;padding:14px 16px 10px 10px;width:100%;background:none;border:0;text-align:left;cursor:pointer;font:inherit;color:inherit}
+.gblock.closed .ghrow{padding-bottom:14px}
+.ghrow .chev{width:22px;height:22px;display:flex;align-items:center;justify-content:center;color:var(--mute);transition:transform .18s}
+.ghrow .chev svg{width:18px;height:18px}
+.gblock.closed .ghrow .chev{transform:rotate(-90deg)}
+.ghrow .wn{display:flex;flex-direction:column;flex:1;min-width:0}
+.ghrow .cnt{font-weight:500;color:var(--mute);font-size:12.5px}
+.ghrow:focus-visible{outline:2px solid var(--brand);outline-offset:-2px;border-radius:12px}
+@media (prefers-reduced-motion:reduce){.ghrow .chev{transition:none}}
 .ghrow .wn{font-weight:650}
 .ghrow .wb{font-weight:650}
 .wrow.acct{padding:9px 16px 9px 40px;border-bottom:0}
@@ -307,6 +315,12 @@ a.link{text-decoration:none}
 .seg.t-loan button[aria-pressed=true]{color:var(--brand)}
 .amount.t-loan span,.amount.t-asset span{color:var(--brand)}
 .facts small.late,.stats3 small.late{display:block}
+
+/* two-step account picker */
+.chip .n{margin-left:6px;font-size:12px;font-weight:600;color:var(--mute);background:var(--line);border-radius:999px;padding:0 7px;line-height:18px}
+.chip[aria-pressed=true] .n{color:var(--brand);background:rgba(255,255,255,.6)}
+.subl{margin:12px 2px 0;font-size:12.5px;font-weight:600;color:var(--mute);letter-spacing:.02em}
+.subl+.chips{margin-top:6px}
 
 /* lock screen */
 .lock{max-width:380px;margin:0 auto;padding:max(12vh,48px) 26px 28px;text-align:center;color:#fff}
