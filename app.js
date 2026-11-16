@@ -46,6 +46,7 @@
     clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
     trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/>',
     refresh: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
+    chev: '<polyline points="6 9 12 15 18 9"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
     worth: '<path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/>',
     people: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
@@ -521,7 +522,11 @@
       '<button class="q-inc" data-quick="income">' + ic('inn') + 'Income</button>' +
       '<button class="q-tr" data-quick="transfer">' + ic('swap') + 'Transfer</button></div>';
 
-    html += '<div class="sec-h"><h2>Where your money is</h2></div>';
+    var multi = groups.filter(function (g) { return !(g.wallets.length === 1 && g.wallets[0].name.toLowerCase() === g.name.toLowerCase()); });
+    var folded = db.settings.collapsed || {};
+    var allFolded = multi.length > 0 && multi.every(function (g) { return folded[g.name]; });
+    html += '<div class="sec-h"><h2>Where your money is</h2>' +
+      (multi.length ? '<button class="link" data-gall="' + (allFolded ? 'open' : 'close') + '">' + (allFolded ? 'Expand all' : 'Collapse all') + '</button>' : '') + '</div>';
     if (!groups.length) html += '<p class="note">No accounts yet. Sync to load them from your sheet.</p>';
     else html += '<div class="sheet wallets">' + groups.map(function (g) {
       var single = g.wallets.length === 1 && g.wallets[0].name.toLowerCase() === g.name.toLowerCase();
@@ -531,12 +536,16 @@
           '<span class="wn">' + esc(w.name) + '</span><span class="wshare">' + share(w.balance) + '</span>' +
           '<b class="wb' + (w.balance < 0 ? ' neg' : '') + '">' + secret(w.balance) + '</b></button>';
       }
-      return '<div class="gblock"><div class="ghrow"><i class="wdot" style="background:' + groupColor(g.name) + '"></i><span class="wn">' + esc(g.name) + '</span>' +
-        '<span class="wshare">' + share(g.total) + '</span><b class="wb' + (g.total < 0 ? ' neg' : '') + '">' + secret(g.total) + '</b></div>' +
-        g.wallets.map(function (w) {
+      var closed = !!folded[g.name];
+      return '<div class="gblock' + (closed ? ' closed' : '') + '"><button type="button" class="ghrow" data-gtoggle="' + esc(g.name) + '" aria-expanded="' + (!closed) + '">' +
+        '<span class="chev" aria-hidden="true">' + ic('chev') + '</span>' +
+        '<i class="wdot" style="background:' + groupColor(g.name) + '"></i><span class="wn">' + esc(g.name) +
+        (closed ? '<small class="cnt">' + g.wallets.length + ' accounts</small>' : '') + '</span>' +
+        '<span class="wshare">' + share(g.total) + '</span><b class="wb' + (g.total < 0 ? ' neg' : '') + '">' + secret(g.total) + '</b></button>' +
+        (closed ? '' : g.wallets.map(function (w) {
           return '<button class="wrow acct" data-wallet-go="' + esc(w.name) + '"><i class="wdot sm" style="background:' + wcolor(w.name) + '"></i>' +
             '<span class="wn">' + esc(w.name) + '</span><b class="wb' + (w.balance < 0 ? ' neg' : '') + '">' + secret(w.balance) + '</b></button>';
-        }).join('') + '</div>';
+        }).join('')) + '</div>';
     }).join('') + '</div>';
 
     // loans and assets at a glance
@@ -600,6 +609,31 @@
     if (fn) fn.textContent = feeNote();
   }
 
+  // Two steps: first the wallet type (Cash, MFS, Bank...), then only the accounts of that type.
+  // A type with a single account picks it straight away.
+  function acctPicker(key, selected, attr) {
+    var db = S.db, obj = attr === 'lchip' ? S.lf : S.form, gk = attr + ':' + key;
+    obj._g = obj._g || {};
+    var names = MT.activeWallets(db, selected);
+    if (!names.length) return '<p class="note">None available. Sync to load them from your sheet.</p>';
+    var groups = MT.groupWallets(names.map(function (n) { return { name: n, group: MT.groupOf(db, n), balance: 0 }; }));
+    var selG = selected ? MT.groupOf(db, selected) : '';
+    var openG = obj._g[gk] || selG;
+    var html = '<div class="chips" role="group" aria-label="Wallet type">' + groups.map(function (g) {
+      var one = g.wallets.length === 1;
+      var label = one ? g.wallets[0].name : g.name;
+      return '<button type="button" class="chip" data-gpick="' + gk + '" data-v="' + esc(g.name) + '" aria-pressed="' + (g.name === openG || (one && g.wallets[0].name === selected)) + '">' +
+        '<i class="wdot" style="background:' + groupColor(g.name) + '"></i>' + esc(label) +
+        (one ? '' : '<span class="n">' + g.wallets.length + '</span>') + '</button>';
+    }).join('') + '</div>';
+    var open = groups.filter(function (g) { return g.name === openG; })[0];
+    if (open && open.wallets.length > 1) {
+      html += '<p class="subl">' + esc(open.name) + ' accounts</p>' +
+        chipRow(key, open.wallets.map(function (w) { return w.name; }), selected, attr);
+    }
+    return html;
+  }
+
   function chipRow(key, items, selected, attr) {
     attr = attr || 'chip';
     if (!items.length) return '<p class="note">None available. Sync to load them from your sheet.</p>';
@@ -628,10 +662,10 @@
       '<div class="amount t-' + f.type + '"><span aria-hidden="true">৳</span><input id="f-amount" data-f="amount" inputmode="decimal" placeholder="0" autocomplete="off" aria-label="Amount" value="' + esc(f.amount) + '"></div>';
     if (!isT) {
       html += '<label>Category</label>' + chipRow('category', MT.categoriesFor(db, f.type, f.category), f.category) +
-        '<label>Account</label>' + chipRow('wallet', MT.activeWallets(db, f.wallet), f.wallet);
+        '<label>Account</label>' + acctPicker('wallet', f.wallet, 'chip');
     } else {
-      html += '<label>From</label>' + chipRow('wallet', MT.activeWallets(db, f.wallet), f.wallet) +
-        '<label>To</label>' + chipRow('toWallet', MT.activeWallets(db, f.toWallet), f.toWallet) +
+      html += '<label>From</label>' + acctPicker('wallet', f.wallet, 'chip') +
+        '<label>To</label>' + acctPicker('toWallet', f.toWallet, 'chip') +
         '<label for="f-fee">Charge (৳)</label><input id="f-fee" data-f="fee" inputmode="decimal" autocomplete="off" value="' + esc(f.fee) + '">' +
         '<p class="note" id="fee-note">' + esc(feeNote()) + '</p>';
     }
@@ -1165,7 +1199,7 @@
       }).join('') + '</div>';
     }
     html += '<p class="note" id="lhint">' + loanHintHtml() + '</p>' +
-      '<label>Account</label>' + chipRow('wallet', MT.activeWallets(db, f.wallet), f.wallet, 'lchip') +
+      '<label>Account</label>' + acctPicker('wallet', f.wallet, 'lchip') +
       '<label for="lf-date">Date</label>' +
       '<div class="datechips"><button type="button" class="chip" data-ldatechip="today" aria-pressed="' + (f.date === MT.todayStr()) + '">Today</button>' +
       '<button type="button" class="chip" data-ldatechip="yesterday" aria-pressed="' + (f.date === yesterday) + '">Yesterday</button></div>' +
@@ -1426,7 +1460,17 @@
     window.scrollTo(0, 0);
   }
 
-  var CLICKABLE = '[data-act],[data-go],[data-edit],[data-chip],[data-seg],[data-lockmin],[data-pick],[data-quick],[data-rscope],[data-datechip],[data-wallet-go],[data-wtab],[data-worth],[data-person],[data-lnew],[data-lseg],[data-lchip],[data-lpchip],[data-ldatechip],[data-ldue],[data-lfull],[data-asset],[data-anew],[data-achip]';
+  function fireChip(k, v) {
+    S.form[k] = v; S.formErr = '';
+    if (S.form.type === 'transfer' && v && S.form.wallet === S.form.toWallet) {
+      var other = MT.activeWallets(S.db, k === 'wallet' ? S.form.toWallet : S.form.wallet).filter(function (x) { return x !== v; })[0] || '';
+      if (k === 'wallet') S.form.toWallet = other; else S.form.wallet = other;
+    }
+    if (k === 'wallet' || k === 'toWallet') recalcFee();
+    renderView();
+  }
+
+  var CLICKABLE = '[data-act],[data-go],[data-edit],[data-chip],[data-seg],[data-lockmin],[data-pick],[data-quick],[data-rscope],[data-datechip],[data-wallet-go],[data-gpick],[data-gtoggle],[data-gall],[data-wtab],[data-worth],[data-person],[data-lnew],[data-lseg],[data-lchip],[data-lpchip],[data-ldatechip],[data-ldue],[data-lfull],[data-asset],[data-anew],[data-achip]';
 
   app.addEventListener('click', function (e) {
     var el = e.target.closest(CLICKABLE);
@@ -1441,6 +1485,16 @@
       S.ym = MT.monthOf(MT.todayStr());
       go('history');
       return;
+    }
+    if (el.hasAttribute('data-gtoggle')) {
+      var gn = el.getAttribute('data-gtoggle'), cl = S.db.settings.collapsed || {};
+      if (cl[gn]) delete cl[gn]; else cl[gn] = true;
+      S.db.settings.collapsed = cl; persist(); renderView(); return;
+    }
+    if (el.hasAttribute('data-gall')) {
+      var closeAll = el.getAttribute('data-gall') === 'close', cl2 = {};
+      if (closeAll) MT.balances(S.db).groups.forEach(function (g) { cl2[g.name] = true; });
+      S.db.settings.collapsed = cl2; persist(); renderView(); return;
     }
     if (el.hasAttribute('data-wtab')) { S.wtab = el.getAttribute('data-wtab'); renderView(); return; }
     if (el.hasAttribute('data-worth')) { S.wtab = el.getAttribute('data-worth'); go('worth'); return; }
@@ -1510,15 +1564,24 @@
       }
       return;
     }
-    if (el.hasAttribute('data-chip')) {
-      var k = el.getAttribute('data-chip'), v = el.getAttribute('data-v');
-      S.form[k] = v; S.formErr = '';
-      if (S.form.type === 'transfer' && S.form.wallet === S.form.toWallet) {
-        var other = MT.activeWallets(S.db, k === 'wallet' ? S.form.toWallet : S.form.wallet).filter(function (x) { return x !== v; })[0] || '';
-        if (k === 'wallet') S.form.toWallet = other; else S.form.wallet = other;
+    if (el.hasAttribute('data-gpick')) {
+      var gk = el.getAttribute('data-gpick'), gv = el.getAttribute('data-v');
+      var ga = gk.split(':')[0], gkey = gk.split(':')[1];
+      var obj = ga === 'lchip' ? S.lf : S.form;
+      obj._g = obj._g || {};
+      obj._g[gk] = gv;
+      var inGroup = MT.activeWallets(S.db).filter(function (n) { return MT.groupOf(S.db, n) === gv; });
+      if (inGroup.length === 1) {
+        if (ga === 'lchip') { S.lf.wallet = inGroup[0]; S.lErr = ''; renderView(); }
+        else { fireChip(gkey, inGroup[0]); }
+        return;
       }
-      if (k === 'wallet' || k === 'toWallet') recalcFee();
+      if (inGroup.indexOf(obj[gkey]) < 0) { obj[gkey] = ''; if (ga === 'chip') { S.formErr = ''; recalcFee(); } }
       renderView();
+      return;
+    }
+    if (el.hasAttribute('data-chip')) {
+      fireChip(el.getAttribute('data-chip'), el.getAttribute('data-v'));
       return;
     }
     if (el.hasAttribute('data-lockmin')) {
